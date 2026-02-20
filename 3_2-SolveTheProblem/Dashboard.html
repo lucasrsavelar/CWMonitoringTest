@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transaction Anomaly Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600&display=swap"
+    rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #080c10;
+      --surface: #0d1117;
+      --border: #1c2a38;
+      --green: #00ff9d;
+      --amber: #ffb700;
+      --red: #ff3d5a;
+      --blue: #38bdf8;
+      --muted: #4a6070;
+      --text: #cdd9e5;
+      --mono: 'Share Tech Mono', monospace;
+      --sans: 'Barlow', sans-serif;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow-x: hidden;
+    }
+
+    /* SCANLINE overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      background: repeating-linear-gradient(0deg,
+          transparent,
+          transparent 2px,
+          rgba(0, 0, 0, 0.05) 2px,
+          rgba(0, 0, 0, 0.05) 4px);
+      pointer-events: none;
+    }
+
+    /* ── HEADER ── */
+    header {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 28px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 34px;
+      height: 34px;
+      border: 2px solid var(--green);
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+
+    .logo-icon::before {
+      content: '';
+      width: 10px;
+      height: 10px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(0.7);
+      }
+    }
+
+    .logo-text {
+      font-family: var(--mono);
+      font-size: 15px;
+      color: var(--green);
+      letter-spacing: 0.08em;
+    }
+
+    .logo-sub {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .header-meta {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .meta-item {
+      text-align: right;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .meta-item span {
+      display: block;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    #status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    /* ── LAYOUT ── */
+    main {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      grid-template-rows: auto auto 1fr;
+      gap: 16px;
+      padding: 16px 28px 28px;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* ── PANELS ── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .panel-title strong {
+      color: var(--text);
+    }
+
+    .panel-body {
+      padding: 18px;
+    }
+
+    /* ── CHART ── */
+    .chart-panel {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .chart-wrap {
+      padding: 12px 18px 18px;
+      height: 320px;
+      position: relative;
+    }
+
+    /* ── STAT CARDS ── */
+    .stats-row {
+      grid-column: 1;
+      grid-row: 3;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+      align-content: start;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+    }
+
+    .stat-card.approved::before {
+      background: var(--green);
+    }
+
+    .stat-card.denied::before {
+      background: var(--red);
+    }
+
+    .stat-card.failed::before {
+      background: var(--amber);
+    }
+
+    .stat-card.refunded::before {
+      background: var(--blue);
+    }
+
+    .stat-card.reversed::before {
+      background: #c084fc;
+    }
+
+    .stat-card.backend::before {
+      background: #fb923c;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+      font-family: var(--mono);
+    }
+
+    .stat-value {
+      font-family: var(--mono);
+      font-size: 24px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    /* ── RIGHT SIDEBAR ── */
+    .sidebar {
+      grid-column: 2;
+      grid-row: 1 / span 3;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ── FORM ── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      transition: border-color 0.2s;
+      width: 100%;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: var(--green);
+    }
+
+    button {
+      width: 100%;
+      margin-top: 4px;
+      padding: 10px;
+      background: transparent;
+      border: 1px solid var(--green);
+      border-radius: 5px;
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    button:hover {
+      background: var(--green);
+      color: var(--bg);
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* ── RESULT BOX ── */
+    #result-box {
+      display: none;
+      margin-top: 12px;
+      border-radius: 6px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    #result-box.anomaly {
+      border-color: var(--red);
+      background: rgba(255, 61, 90, 0.08);
+    }
+
+    #result-box.normal {
+      border-color: var(--green);
+      background: rgba(0, 255, 157, 0.05);
+    }
+
+    .result-verdict {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .result-scores {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .score-line {
+      color: var(--muted);
+    }
+
+    .score-line span {
+      color: var(--text);
+    }
+
+    /* ── ANOMALY LOG ── */
+    .log-list {
+      max-height: 280px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .log-item {
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 11px;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .log-item:last-child {
+      border-bottom: none;
+    }
+
+    .log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      cursor: pointer;
+      user-select: none;
+      gap: 8px;
+    }
+
+    .log-header:hover .log-feature {
+      color: var(--red);
+    }
+
+    .log-feature {
+      color: var(--red);
+      font-size: 12px;
+      font-weight: 600;
+      transition: color 0.15s;
+      flex: 1;
+    }
+
+    .log-time {
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .log-chevron {
+      color: var(--muted);
+      font-size: 10px;
+      transition: transform 0.2s;
+    }
+
+    .log-item.open .log-chevron {
+      transform: rotate(90deg);
+    }
+
+    .log-body {
+      display: none;
+      padding: 0 0 10px 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .log-item.open .log-body {
+      display: block;
+    }
+
+    .log-score {
+      color: var(--amber);
+      margin-top: 4px;
+    }
+
+    .log-empty {
+      padding: 24px 0;
+      text-align: center;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    /* ── REFRESH TAG ── */
+    .refresh-tag {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .refresh-tag .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    /* ── DATE FILTER ── */
+    .filter-bar {
+      grid-column: 1;
+      grid-row: 1;
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      padding: 14px 18px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .filter-bar .field {
+      flex: 1;
+      max-width: 200px;
+    }
+
+
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .filter-actions button {
+      width: auto;
+      margin-top: 0;
+      padding: 8px 16px;
+      font-size: 11px;
+    }
+
+    .btn-clear {
+      border-color: var(--muted) !important;
+      color: var(--muted) !important;
+    }
+
+    .btn-clear:hover {
+      background: var(--muted) !important;
+      color: var(--bg) !important;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ══ HEADER ══ -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon"></div>
+      <div>
+        <div class="logo-text">ANOMALY MONITOR</div>
+        <div class="logo-sub">Transaction Surveillance System</div>
+      </div>
+    </div>
+    <div class="header-meta">
+      <div class="meta-item">
+        LAST UPDATE
+        <span id="last-update">—</span>
+      </div>
+      <div class="meta-item">
+        ANOMALIES
+        <span id="anomaly-count" style="color: var(--red)">0</span>
+      </div>
+      <div id="status-dot"></div>
+    </div>
+  </header>
+
+  <!-- ══ MAIN ══ -->
+  <main>
+
+    <!-- Date Filter -->
+    <div class="filter-bar">
+      <div class="field">
+        <label for="filter-start">Start Date</label>
+        <input type="text" id="filter-start" placeholder="2025-07-12 13:45:00" />
+      </div>
+      <div class="field">
+        <label for="filter-end">End Date</label>
+        <input type="text" id="filter-end" placeholder="2025-07-12 23:59:59" />
+      </div>
+      <div class="filter-actions">
+        <button onclick="applyFilter()">⌕ APPLY FILTER</button>
+        <button class="btn-clear" onclick="clearFilter()">✕ CLEAR</button>
+      </div>
+    </div>
+
+    <!-- Chart -->
+    <div class="panel chart-panel">
+      <div class="panel-header">
+        <div class="panel-title"><strong>TRANSACTION VOLUME</strong> — por minuto</div>
+        <div class="refresh-tag"><span class="dot"></span> auto-refresh 30s</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="txChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="stats-row">
+      <div class="stat-card approved">
+        <div class="stat-label">Approved</div>
+        <div class="stat-value" id="s-approved">—</div>
+      </div>
+      <div class="stat-card denied">
+        <div class="stat-label">Denied</div>
+        <div class="stat-value" id="s-denied">—</div>
+      </div>
+      <div class="stat-card failed">
+        <div class="stat-label">Failed</div>
+        <div class="stat-value" id="s-failed">—</div>
+      </div>
+      <div class="stat-card refunded">
+        <div class="stat-label">Refunded</div>
+        <div class="stat-value" id="s-refunded">—</div>
+      </div>
+      <div class="stat-card reversed">
+        <div class="stat-label">Reversed</div>
+        <div class="stat-value" id="s-reversed">—</div>
+      </div>
+      <div class="stat-card backend">
+        <div class="stat-label">B. Reversed</div>
+        <div class="stat-value" id="s-backend">—</div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <!-- Form -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><strong>SUBMIT</strong> transaction</div>
+        </div>
+        <div class="panel-body">
+          <div class="form-grid">
+            <div class="field full">
+              <label>Timestamp</label>
+              <input type="text" id="f-timestamp" placeholder="2025-07-12 13:45:00" />
+            </div>
+            <div class="field">
+              <label>Approved</label>
+              <input type="number" id="f-approved" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>Denied</label>
+              <input type="number" id="f-denied" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>Refunded</label>
+              <input type="number" id="f-refunded" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>Failed</label>
+              <input type="number" id="f-failed" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>Reversed</label>
+              <input type="number" id="f-reversed" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>B. Reversed</label>
+              <input type="number" id="f-backend" min="0" value="0" />
+            </div>
+          </div>
+          <button id="submit-btn" onclick="submitTransaction()">▶ ANALYZE TRANSACTION</button>
+
+          <div id="result-box">
+            <div class="result-verdict" id="result-verdict"></div>
+            <div class="result-scores" id="result-scores"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Anomaly log -->
+      <div class="panel" style="flex:1">
+        <div class="panel-header">
+          <div class="panel-title"><strong>ANOMALY</strong> log</div>
+          <div class="refresh-tag"><span class="dot" style="background:var(--red)"></span> live</div>
+        </div>
+        <div class="panel-body" style="padding: 0 18px 18px">
+          <div class="log-list" id="anomaly-log">
+            <div class="log-empty">No anomalies detected yet.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    const API = 'http://localhost:8000';
+    let chart = null;
+
+    let activeFilter = { start_date: null, end_date: null };
+
+    // ── UTILS ──────────────────────────────────
+    function now() {
+      return new Date().toLocaleTimeString('pt-BR');
+    }
+
+    function fmt(n) {
+      return Number(n).toLocaleString('pt-BR');
+    }
+
+    // ── CHART ──────────────────────────────────
+    function initChart(labels, datasets) {
+      const ctx = document.getElementById('txChart').getContext('2d');
+
+      const colors = {
+        approved: '#00ff9d',
+        denied: '#ff3d5a',
+        failed: '#ffb700',
+        refunded: '#38bdf8',
+        reversed: '#c084fc',
+        backend_reversed: '#fb923c',
+      };
+
+      if (chart) chart.destroy();
+
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: Object.entries(colors).map(([key, color]) => ({
+            label: key.replace('_', ' '),
+            data: datasets[key] || [],
+            borderColor: color,
+            backgroundColor: color + '18',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            fill: false,
+          }))
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 400 },
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                color: '#4a6070',
+                font: { family: 'Share Tech Mono', size: 10 },
+                boxWidth: 10,
+                padding: 14,
+              }
+            },
+            tooltip: {
+              backgroundColor: '#0d1117',
+              borderColor: '#1c2a38',
+              borderWidth: 1,
+              titleColor: '#cdd9e5',
+              bodyColor: '#4a6070',
+              titleFont: { family: 'Share Tech Mono' },
+              bodyFont: { family: 'Share Tech Mono' },
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                color: '#4a6070',
+                font: { family: 'Share Tech Mono', size: 9 },
+                maxTicksLimit: 12,
+                maxRotation: 0,
+              },
+              grid: { color: '#1c2a38' }
+            },
+            y: {
+              ticks: { color: '#4a6070', font: { family: 'Share Tech Mono', size: 10 } },
+              grid: { color: '#1c2a38' }
+            }
+          }
+        }
+      });
+    }
+
+    // ── FETCH TRANSACTIONS ──────────────────────
+    async function loadTransactions() {
+      try {
+        const params = new URLSearchParams();
+        if (activeFilter.start_date) params.set('start_date', activeFilter.start_date);
+        if (activeFilter.end_date) params.set('end_date', activeFilter.end_date);
+
+        const query = params.toString() ? `?${params}` : '';
+        const res = await fetch(`${API}/transactions${query}`);
+        const data = await res.json();
+
+        if (!data.length) return;
+
+        const labels = data.map(r => r.date_hour.slice(5, 16));
+        const datasets = {};
+        ['approved', 'denied', 'failed', 'refunded', 'reversed', 'backend_reversed'].forEach(k => {
+          datasets[k] = data.map(r => r[k]);
+        });
+
+        initChart(labels, datasets);
+
+        const sum = k => data.reduce((acc, r) => acc + (r[k] || 0), 0);
+        document.getElementById('s-approved').textContent = fmt(sum('approved'));
+        document.getElementById('s-denied').textContent = fmt(sum('denied'));
+        document.getElementById('s-failed').textContent = fmt(sum('failed'));
+        document.getElementById('s-refunded').textContent = fmt(sum('refunded'));
+        document.getElementById('s-reversed').textContent = fmt(sum('reversed'));
+        document.getElementById('s-backend').textContent = fmt(sum('backend_reversed'));
+
+        document.getElementById('last-update').textContent = now();
+
+      } catch (e) {
+        console.error('Erro ao carregar transações:', e);
+      }
+    }
+
+    // ── FETCH ANOMALY LOG ───────────────────────
+    async function loadAnomalies() {
+      try {
+        const res = await fetch(`${API}/anomalies`);
+        const data = await res.json();
+
+        document.getElementById('anomaly-count').textContent = data.length;
+
+        const container = document.getElementById('anomaly-log');
+
+        if (!data.length) {
+          container.innerHTML = '<div class="log-empty">No anomalies detected yet.</div>';
+          return;
+        }
+
+        container.innerHTML = [...data].reverse().map((a, i) => `
+          <div class="log-item" id="log-item-${i}">
+            <div class="log-header" onclick="toggleLog(${i})">
+              <span class="log-feature">⚠ ${a.main_feature || 'anomaly'}</span>
+              <span class="log-time">${a.date_hour}</span>
+              <span class="log-chevron">▶</span>
+            </div>
+            <div class="log-body">${(a.anomaly_message || '').trim()}<div class="log-score">ensemble score: ${typeof a.ensemble_score === 'number' ? a.ensemble_score.toFixed(4) : a.ensemble_score}</div>
+          </div>
+        `).join('');
+
+      } catch (e) {
+        console.error('Erro ao carregar anomalias:', e);
+      }
+    }
+
+    // ── SUBMIT TRANSACTION ──────────────────────
+    async function submitTransaction() {
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳ ANALYZING...';
+
+      const payload = {
+        timestamp: document.getElementById('f-timestamp').value,
+        approved: parseInt(document.getElementById('f-approved').value) || 0,
+        denied: parseInt(document.getElementById('f-denied').value) || 0,
+        failed: parseInt(document.getElementById('f-failed').value) || 0,
+        reversed: parseInt(document.getElementById('f-reversed').value) || 0,
+        backend_reversed: parseInt(document.getElementById('f-backend').value) || 0,
+        refunded: parseInt(document.getElementById('f-refunded').value) || 0,
+      };
+
+      try {
+        const res = await fetch(`${API}/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+        showResult(data);
+
+        if (data.is_anomaly) await loadAnomalies();
+
+      } catch (e) {
+        alert('Erro ao conectar com a API: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '▶ ANALYZE TRANSACTION';
+      }
+    }
+
+    function showResult(data) {
+      const box = document.getElementById('result-box');
+      const verdict = document.getElementById('result-verdict');
+      const scores = document.getElementById('result-scores');
+
+      box.className = data.is_anomaly ? 'anomaly' : 'normal';
+      box.style.display = 'block';
+
+      verdict.innerHTML = data.is_anomaly
+        ? `<span style="color:var(--red)">⚠ ANOMALY DETECTED</span>`
+        : `<span style="color:var(--green)">✓ NORMAL</span>`;
+
+      if (data.is_anomaly && data.body) {
+        const b = data.body;
+        scores.innerHTML = `
+          <div class="score-line" style="grid-column:1/-1; color:var(--red); font-size:12px; font-weight:600; margin-bottom:4px">
+            ⚠ ${b.main_feature || 'anomaly'}
+          </div>
+          <div class="score-line" style="grid-column:1/-1; white-space:pre-wrap; color:var(--muted); font-size:10px; margin-bottom:6px">${(b.details || '').trim()}</div>
+          ${b.ensemble_score != null ? `<div class="score-line">ensemble <span>${b.ensemble_score.toFixed(4)}</span></div>` : ''}
+        `;
+      } else {
+        scores.innerHTML = '';
+      }
+    }
+
+    function toggleLog(i) {
+      const item = document.getElementById('log-item-' + i);
+      if (item) item.classList.toggle('open');
+    }
+
+    // ── TIMESTAMP DEFAULT ───────────────────────
+    function setDefaultTimestamp() {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('f-timestamp').value =
+        `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+        `${pad(now.getHours())}:${pad(now.getMinutes())}:00`;
+    }
+
+    // ── FILTER ACTIONS ──────────────────────────
+    function applyFilter() {
+      const s = document.getElementById('filter-start').value.trim();
+      const e = document.getElementById('filter-end').value.trim();
+      activeFilter = { start_date: s || null, end_date: e || null };
+      loadTransactions();
+    }
+
+    function clearFilter() {
+      document.getElementById('filter-start').value = '';
+      document.getElementById('filter-end').value = '';
+      activeFilter = { start_date: null, end_date: null };
+      loadTransactions();
+    }
+
+    // ── INIT ────────────────────────────────────
+    setDefaultTimestamp();
+    loadTransactions();
+    loadAnomalies();
+
+    // ── AUTO-REFRESH (30s) ──────────────────────
+    setInterval(() => {
+      loadTransactions();
+      loadAnomalies();
+    }, 30_000);
+  </script>
+</body>
+
+</html>

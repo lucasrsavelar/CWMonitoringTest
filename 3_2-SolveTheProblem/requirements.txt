@@ -1,0 +1,18 @@
+# API
+fastapi==0.128.0
+uvicorn==0.40.0
+pydantic==2.12.4
+
+# Database
+sqlalchemy==2.0.45
+psycopg2==2.9.11
+
+# Data / ML
+pandas==3.0.0
+numpy==2.3.5
+scikit-learn==1.8.0
+pyod==2.0.6
+joblib==1.5.3
+
+# Notifications
+requests==2.32.5
